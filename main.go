@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	godebug "runtime/debug"
 	"strconv"
         _ "github.com/wlynxg/anet"
 	"universal-bypass-tool/socks5"
@@ -19,6 +20,7 @@ var (
 	globalDocUrl string
 	maxToken     string
 	maxUid       string
+	localIP      string 
 )
 
 func main() {
@@ -33,7 +35,18 @@ func main() {
 	flag.StringVar(&globalDocUrl, "url", "http://#", "Document URL. If u use Yandex.Docs transport")
 	flag.StringVar(&maxToken, "maxToken", "", "MAX Web token. If u use MAX transport")
 	flag.StringVar(&maxUid, "maxUid", "", "MAX call user id. If u use MAX transport")
+	flag.StringVar(&localIP, "local-ip", "", "Egress IP for exit node (scoped RST drop)")
 	flag.Parse()
+
+	if localIP != "" {
+		tunnel.SetLocalIP(localIP)
+	}
+
+	// The exit node often runs on a tiny VPS; keep the heap tight under load
+	// (GC aggressively). Set GOMEMLIMIT in the environment for a hard soft-cap.
+	if *exitNode {
+		godebug.SetGCPercent(20)
+	}
 
 	if !*exitNode && !*client {
 		flag.Usage()
@@ -71,7 +84,18 @@ func main() {
 
 	if *exitNode {
 		log.Printf("Running as EXIT NODE (needs root for raw socket)")
-		log.Printf("! Run: sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP")
+		if localIP != "" {
+			// Scoped: only drop kernel RSTs originating from the tunnel's
+			// egress IP, leaving the host's other services (and their
+			// closed-port RSTs) untouched.
+			log.Printf("! Run: sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -s %s -j DROP", localIP)
+		} else {
+			log.Printf("! Kernel RSTs would tear down tunnel connections. Prefer a scoped rule:")
+			log.Printf("!   assign a dedicated alias IP, run with --local-ip <ip>, then:")
+			log.Printf("!   sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -s <ip> -j DROP")
+			log.Printf("! Host-wide fallback (drops ALL outbound RST; makes closed ports look filtered):")
+			log.Printf("!   sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP")
+		}
 		select {}
 	} else {
 		log.Printf("Running as CLIENT (SOCKS5 on %s)", *socksAddr)
