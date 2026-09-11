@@ -1,20 +1,38 @@
-name: Build iOS Client
+name: Build Full iOS App
 on: [workflow_dispatch]
 jobs:
   build:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: 'stable'
-      - name: Run Build Script
+          
+      - name: Install XcodeGen
+        run: brew install xcodegen
+        
+      - name: Run Official Build Script
         run: |
-          chmod +x build_ios.sh
-          ./build_ios.sh
+          chmod +x build_ios_app.sh
+          # Запускаем скрипт разработчика (он собирает Go-ядро и генерирует проект)
+          # || true позволяет продолжить работу, если скрипт упадет из-за отсутствия подписи
+          ./build_ios_app.sh || true
+          
+      - name: Build unsigned IPA
+        run: |
+          cd ios-app
+          # Принудительно собираем iOS-приложение без проверки сертификата
+          xcodebuild clean build -project OpenFlux.xcodeproj -scheme OpenFlux -configuration Release -sdk iphoneos CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO CONFIGURATION_BUILD_DIR="$(pwd)/build"
+          
+          mkdir -p Payload
+          cp -r build/OpenFlux.app Payload/
+          zip -r OpenFlux.ipa Payload
+          
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OpenFlux-iOS-Binary
-          path: ./*
+          name: OpenFlux-App-IPA
+          path: ios-app/OpenFlux.ipa
